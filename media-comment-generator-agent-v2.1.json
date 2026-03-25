@@ -1,0 +1,1479 @@
+{
+  "name": "🤖 Media Comment Generator",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "media-comment/generate",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-main",
+      "name": "Webhook",
+      "position": [
+        -2880,
+        16
+      ],
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "webhookId": "017196b1-eb2f-4a50-baec-2faa3ad05ea6"
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "b2-0001-4000-8000-000000000001",
+      "name": "When Called by Router",
+      "position": [
+        -2560,
+        -192
+      ],
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1
+    },
+    {
+      "parameters": {
+        "jsCode": "const PERSON_ALIASES = [\n  { id: 'maria_arkhangelskaya', aliases: ['maria', 'мария', 'masha', 'маша'] },\n  { id: 'ilya_morozov', aliases: ['ilya', 'илья', 'morozov', 'морозов'] },\n  { id: 'dmitry_balobanov', aliases: ['dmitry', 'дмитрий', 'balobanov'] },\n  { id: 'vlad_sitaev', aliases: ['vlad', 'влад', 'sitaev'] },\n  { id: 'toure_benin', aliases: ['toure', 'туре'] },\n  { id: 'kirill_fomin', aliases: ['kirill', 'кирилл'] },\n  { id: 'ekaterina_antonova', aliases: ['katya', 'катя', 'antonova'] },\n  { id: 'julia_shlyahova', aliases: ['julia', 'юля', 'shlyahova'] },\n  { id: 'leonid_feigin', aliases: ['leonid', 'леонид', 'feigin'] },\n];\n\nfunction normalizeText(v) {\n  return String(v ?? '').replace(/\\r\\n/g, '\\n').replace(/\\\\n/g, '\\n').trim();\n}\n\nfunction firstDefined(...values) {\n  for (const value of values) {\n    if (value !== undefined && value !== null && value !== '') return value;\n  }\n  return '';\n}\n\nfunction extractField(line, regex) {\n  const match = line.match(regex);\n  return match ? String(match[1] || '').trim() : '';\n}\n\nfunction toSnakeCase(input) {\n  return String(input || '')\n    .trim()\n    .toLowerCase()\n    .replace(/\\.json$/i, '')\n    .replace(/[\\s\\-]+/g, '_')\n    .replace(/[^a-z0-9_]/g, '')\n    .replace(/_+/g, '_')\n    .replace(/^_|_$/g, '');\n}\n\nfunction resolveProfile(personRaw) {\n  const normalized = toSnakeCase(personRaw);\n\n  if (normalized && /^[a-z0-9]+(?:_[a-z0-9]+)+$/.test(normalized)) {\n    return {\n      requestedProfileId: normalized,\n      profileId: normalized,\n      profileResolutionHint: 'direct_id',\n    };\n  }\n\n  const lower = String(personRaw || '').toLowerCase();\n  for (const entry of PERSON_ALIASES) {\n    if (entry.aliases.some((alias) => lower.includes(alias))) {\n      return {\n        requestedProfileId: entry.id,\n        profileId: entry.id,\n        profileResolutionHint: 'alias_match',\n      };\n    }\n  }\n\n  return {\n    requestedProfileId: 'maria_arkhangelskaya',\n    profileId: 'maria_arkhangelskaya',\n    profileResolutionHint: 'fallback_default',\n  };\n}\n\nconst inputData = $input.first().json;\nconst messageText = normalizeText(firstDefined(inputData.messageText, inputData.message?.text, inputData.feedback, ''));\n\nconst chatId = firstDefined(inputData.chatId, inputData.message?.chat?.id, '');\nconst userId = firstDefined(inputData.userId, inputData.message?.from?.id, '');\n\nlet person = '';\nlet articleUrl = '';\nlet question = '';\n\n// Use Unicode escapes for Cyrillic in regex to avoid encoding corruption\nfor (const line of messageText.split('\\n')) {\n  if (!line) continue;\n  if (/PERSON:|\\u043f\\u0435\\u0440\\u0441\\u043e\\u043d\\u0430:/i.test(line))\n    person = extractField(line, /(?:PERSON:|\\u043f\\u0435\\u0440\\u0441\\u043e\\u043d\\u0430:)(.*)$/i);\n  if (/LINK:|\\u0441\\u0441\\u044b\\u043b\\u043a\\u0430:|CONTEXT:|\\u043a\\u043e\\u043d\\u0442\\u0435\\u043a\\u0441\\u0442:/i.test(line)) {\n    const value = extractField(line, /(?:LINK:|\\u0441\\u0441\\u044b\\u043b\\u043a\\u0430:|CONTEXT:|\\u043a\\u043e\\u043d\\u0442\\u0435\\u043a\\u0441\\u0442:)(.*)$/i);\n    if (value) articleUrl = value;\n  }\n  if (/QUESTION:|\\u0432\\u043e\\u043f\\u0440\\u043e\\u0441:/i.test(line))\n    question = extractField(line, /(?:QUESTION:|\\u0432\\u043e\\u043f\\u0440\\u043e\\u0441:)(.*)$/i);\n}\n\nconst profileResolution = resolveProfile(person || firstDefined(inputData.person, 'maria'));\nconst urlMatch = String(articleUrl).match(/https?:\\/\\/[^\\s]+/);\nconst cleanUrl = urlMatch ? urlMatch[0] : String(articleUrl || '').trim();\n\nconst isValidChatId = chatId && /^-?\\d+$/.test(String(chatId));\nconst effectiveChatId = isValidChatId ? chatId : (userId && /^-?\\d+$/.test(String(userId)) ? userId : '');\n\nconst missingFields = [];\nif (!cleanUrl) missingFields.push('LINK/\\u043a\\u043e\\u043d\\u0442\\u0435\\u043a\\u0441\\u0442 (\\u0441\\u0441\\u044b\\u043b\\u043a\\u0430 \\u043d\\u0430 \\u0441\\u0442\\u0430\\u0442\\u044c\\u044e)');\nif (!question) missingFields.push('QUESTION/\\u0432\\u043e\\u043f\\u0440\\u043e\\u0441');\nif (!effectiveChatId && inputData.source !== 'web') missingFields.push('chatId (\\u043d\\u0435 \\u043d\\u0430\\u0439\\u0434\\u0435\\u043d \\u0447\\u0430\\u0442 \\u043f\\u043e\\u043b\\u044c\\u0437\\u043e\\u0432\\u0430\\u0442\\u0435\\u043b\\u044f)');\n\nreturn [{\n  json: {\n    ...inputData,\n    person: person || firstDefined(inputData.person, 'maria'),\n    profileId: profileResolution.profileId,\n    requestedProfileId: profileResolution.requestedProfileId,\n    profileResolutionHint: profileResolution.profileResolutionHint,\n    articleUrl: cleanUrl,\n    question,\n    chatId: effectiveChatId || chatId,\n    userId,\n    isValid: missingFields.length === 0,\n    missingFields,\n    timestamp: new Date().toISOString(),\n  },\n}];\n"
+      },
+      "id": "b2-0002-4000-8000-000000000002",
+      "name": "Parse Request",
+      "position": [
+        -2208,
+        0
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.isValid }}",
+              "operator": {
+                "operation": "equals",
+                "type": "boolean"
+              },
+              "rightValue": "={{ true }}"
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          }
+        },
+        "options": {
+          "ignoreCase": false
+        }
+      },
+      "id": "b2-0003-4000-8000-000000000003",
+      "name": "Validate Fields",
+      "position": [
+        -1968,
+        0
+      ],
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "chatId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $(\"Parse Request\").first().json.chatId || $(\"Parse Request\").first().json.userId }}"
+        },
+        "text": "=❌ Не хватает обязательных полей:\n\n{{ $json.missingFields ? $json.missingFields.join('\\n• ') : 'неизвестные' }}\n\n📋 Формат:\nPERSON: maria\nLINK: URL\nQUESTION: Вопрос",
+        "additionalFields": {}
+      },
+      "id": "b2-0004-4000-8000-000000000004",
+      "name": "Send Error: Missing Fields",
+      "position": [
+        -1728,
+        -160
+      ],
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "webhookId": "85f9feb7-2ddc-4ddb-b3e3-0a4c0e1d7d25",
+      "credentials": {
+        "telegramApi": {
+          "id": "otGunkSSnwzGsnSm",
+          "name": "DDVB Test Bot"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "operation": "get",
+        "owner": {
+          "__rl": true,
+          "mode": "name",
+          "value": "cybernexcorps"
+        },
+        "repository": {
+          "__rl": true,
+          "mode": "name",
+          "value": "ceo-comment-writer"
+        },
+        "filePath": "={{ 'profiles/' + $json.profileId + '.json' }}",
+        "asBinaryProperty": false,
+        "additionalParameters": {
+          "reference": "main"
+        }
+      },
+      "id": "b2-0005-4000-8000-000000000005",
+      "name": "Fetch Profile from GitHub",
+      "position": [
+        -1728,
+        80
+      ],
+      "type": "n8n-nodes-base.github",
+      "typeVersion": 1.1,
+      "webhookId": "04d197a2-34db-4024-9193-0bcca4974f57",
+      "credentials": {
+        "githubApi": {
+          "id": "pGlylAmPTa6t4Io0",
+          "name": "GitHub account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "function parseGithubFile(payload) {\n  if (!payload || typeof payload !== 'object') return null;\n  if (payload.profile_id) return payload;\n  if (typeof payload.content === 'string') {\n    try {\n      const decoded = Buffer.from(payload.content, 'base64').toString('utf8');\n      return JSON.parse(decoded);\n    } catch (_) {\n      return null;\n    }\n  }\n  return null;\n}\n\nconst upstream = $('Parse Request').first().json;\nconst payload = $input.first().json || {};\nconst parsed = parseGithubFile(payload);\n\nconst requestedProfile = parsed && typeof parsed === 'object' ? parsed : null;\nconst requestedProfileValid = Boolean(requestedProfile && requestedProfile.active === true);\n\nreturn [{\n  json: {\n    ...upstream,\n    requestedProfile,\n    requestedProfileValid,\n    profileRequested: upstream.requestedProfileId || upstream.profileId || 'maria_arkhangelskaya',\n    profileResolutionHint: requestedProfileValid ? 'requested_active' : 'fallback_default',\n    profileFetchError: payload.error || null,\n  },\n}];"
+      },
+      "id": "b2-0006-4000-8000-000000000006",
+      "name": "Parse Profile",
+      "position": [
+        -1520,
+        80
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build Strategist prompt: analyze question + URL + profile expertise\n// Strategist crafts a FULL structured research brief\n\nconst inputData = $input.first().json;\nconst profile = inputData.profile;\nconst question = inputData.question;\nconst articleUrl = inputData.articleUrl;\nconst chatId = inputData.chatId;\nconst userId = inputData.userId;\nconst targetLength = inputData.targetLength || '1500-2000';\n\nconst expertiseList = (profile.expertise_ru || profile.expertise || []).map(e => `- ${e}`).join('\\n');\nconst speakerName = profile.name_ru || profile.name || 'Мария Архангельская';\nconst speakerTitle = profile.title_ru || profile.title || 'CEO & Managing Partner';\nconst company = profile.company || 'DDVB';\n\nlet urlTopic = '';\ntry {\n  const urlPath = new URL(articleUrl).pathname;\n  const slug = urlPath.split('/').filter(s => s.length > 5).pop() || '';\n  urlTopic = slug.replace(/-/g, ' ').replace(/_/g, ' ');\n} catch (e) {\n  urlTopic = '';\n}\n\nconst systemMessage = `You are a strategic PR Analyst for Russian business media (Sostav, RBC, Forbes, etc.).\n\n## TASK: ANALYZE & BRIEF\n1. Use Tavily Extract to ingest the provided article URL.\n2. Analyze the core themes, hidden editorial stance, and journalist's question.\n3. Formulate a structured Research Brief for the Writer AI, strictly grounded in the Russian market context (local stats, local regulations, local vs global comparison).\n\n## SPEAKER CONTEXT\n**Name:** ${speakerName}, ${speakerTitle}, ${company}\n**Expertise:**\n${expertiseList}\n\n## OUTPUT FORMAT (Strict)\n### Article Summary\n(2-3 sentences max: core thesis and claims)\n\n### Market Context\n(Current Russian market trends relevant to the question)\n\n### Key Statistics Needed\n(List 3+ specific data points the Research Agent needs to find)\n\n### Communication Angle\n(The unique, contrarian, or expert perspective the speaker must take)\n\n### Style Notes\n(Required industry terminology and tone guidelines)`;\n\nconst userMessage = `Fetch the article via Tavily Extract, then create a structured research brief for the Writer AI.\n\nQuestion from journalist: ${question}\n\nArticle URL: ${articleUrl}${urlTopic ? '\\nURL topic hint: ' + urlTopic : ''}\n\nDeliver the brief in a structured format that the Writer AI can use directly.`;\n\nreturn [{\n  json: {\n    systemMessage,\n    userMessage,\n    profile,\n    question,\n    articleUrl,\n    chatId,\n    userId,\n    targetLength\n  }\n}];"
+      },
+      "id": "b2-0007-4000-8000-000000000007",
+      "name": "Build Strategist Prompt",
+      "position": [
+        -768,
+        64
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.userMessage }}",
+        "options": {
+          "systemMessage": "={{ $json.systemMessage }}"
+        }
+      },
+      "id": "b2-0008-4000-8000-000000000008",
+      "name": "Strategist Agent",
+      "position": [
+        -480,
+        64
+      ],
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3
+    },
+    {
+      "parameters": {
+        "model": {
+          "value": "claude-sonnet-4-5-20250929"
+        },
+        "options": {
+          "maxTokensToSample": 4096
+        }
+      },
+      "id": "b2-0009-4000-8000-000000000009",
+      "name": "Strategist Model",
+      "position": [
+        -560,
+        256
+      ],
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.3,
+      "credentials": {
+        "anthropicApi": {
+          "id": "ymGOUl4dtUS4fQuy",
+          "name": "DDVB Anthropic"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "extract",
+        "urls": [
+          "={{ $('Build Strategist Prompt').first().json.articleUrl }}"
+        ],
+        "options": {}
+      },
+      "id": "b2-0031-4000-8000-000000000031",
+      "name": "Strategist Tavily Extract Tool",
+      "position": [
+        -208,
+        240
+      ],
+      "type": "@tavily/n8n-nodes-tavily.tavilyTool",
+      "typeVersion": 1,
+      "credentials": {
+        "tavilyApi": {
+          "id": "qBzKJRDmhiiJIxOl",
+          "name": "Tavily account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract research brief from Strategist output, build Research Agent input\n\nconst inputData = $input.first().json;\nconst strategistOutput = inputData.output || inputData.text || '';\n\nconst upstreamData = $('Build Strategist Prompt').first().json;\nconst profile = upstreamData.profile;\nconst question = upstreamData.question;\nconst articleUrl = upstreamData.articleUrl;\nconst chatId = upstreamData.chatId;\nconst userId = upstreamData.userId;\nconst targetLength = upstreamData.targetLength || '1500-2000';\n\n// Extract research brief — use generic heading match (avoids Cyrillic encoding issues)\nlet researchBrief = '';\nconst briefMatch = strategistOutput.match(/#{2,3}\\s+[^\\n]+\\n([\\s\\S]{100,})$/i);\nif (briefMatch) {\n  researchBrief = briefMatch[1].trim();\n} else {\n  researchBrief = strategistOutput;\n}\n\n// Prepend Russian region context for Perplexity (Unicode to avoid encoding corruption)\n// Россия, российский контекст. Используйте русский язык для всех ответов.\nresearchBrief = 'Россия, российский контекст. Используйте русский язык для всех ответов.\\n\\n' + researchBrief;\n\n// Build search query — generic section extraction\nlet searchQuery = '';\nconst analysisMatch = strategistOutput.match(/##\\s+[^\\n]+\\n([\\s\\S]*?)(?=\\n##|$)/i);\nif (analysisMatch) {\n  searchQuery = 'Россия, российский контекст. ' + analysisMatch[1].trim();\n} else {\n  searchQuery = 'Россия, российский контекст. ' + question + ' ' + researchBrief.substring(0, 500);\n}\n\nif (searchQuery.length > 2000) {\n  searchQuery = searchQuery.substring(0, 2000);\n}\n\nconst researchAgentPrompt = [\n  'You are a research assistant for a Russian business expert comment.',\n  '',\n  'Article URL: ' + articleUrl,\n  'Expert question: ' + question,\n  '',\n  'SEARCH QUERY FOR PERPLEXITY:',\n  searchQuery,\n  '',\n  'STRATEGIST BRIEF (use as context):',\n  researchBrief.substring(0, 2000),\n  '',\n  'INSTRUCTIONS:',\n  '1. Use Perplexity Research Tool with the search query above',\n  '2. If results are insufficient, refine and search again',\n  '3. Return comprehensive research findings focused on the Russian market'\n].join('\\n');\n\nreturn [{\n  json: {\n    strategistOutput,\n    researchBrief,\n    searchQuery,\n    profile,\n    question,\n    articleUrl,\n    chatId,\n    userId,\n    targetLength,\n    researchAgentPrompt\n  }\n}];"
+      },
+      "id": "b2-0010-4000-8000-000000000010",
+      "name": "Build Research Prompt",
+      "position": [
+        -48,
+        64
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.researchAgentPrompt }}",
+        "options": {
+          "systemMessage": "Ты — исследовательский ИИ-агент для агентства DDVB. Твоя цель — собрать актуальную фактуру для экспертного комментария.\n\nУ тебя есть доступ к Perplexity Research Tool.\n\n## АЛГОРИТМ РАБОТЫ\n1. Сформируй точечный поисковый запрос (НЕ БОЛЕЕ 20-40 слов), обязательно включив маркеры «Россия» или «российский рынок».\n2. Вызови Perplexity. Если данных мало — сделай уточняющий запрос (максимум 3 вызова).\n3. Составь итоговый отчет строго на РУССКОМ языке по формату ниже.\n\n## ФОРМАТ ОТЧЕТА\n### КОНТЕКСТ СТАТЬИ\n(Суть в 1-2 предложениях)\n\n### КЛЮЧЕВАЯ СТАТИСТИКА (РФ)\n(Только конкретные цифры, проценты и даты)\n\n### ЭКСПЕРТНЫЕ ПОЗИЦИИ И РЫНОК\n(Мнения рынка и текущая ситуация)\n\n### ИСТОЧНИКИ\n(Список URL)"
+        }
+      },
+      "id": "b2-0011-4000-8000-000000000011",
+      "name": "Research Agent",
+      "position": [
+        192,
+        64
+      ],
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "model": {
+          "value": "claude-sonnet-4-5-20250929"
+        },
+        "options": {}
+      },
+      "id": "b2-0012-4000-8000-000000000012",
+      "name": "Research Model",
+      "position": [
+        112,
+        256
+      ],
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.3,
+      "credentials": {
+        "anthropicApi": {
+          "id": "ymGOUl4dtUS4fQuy",
+          "name": "DDVB Anthropic"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build Writer prompt: research report + full profile\n\nconst inputData = $input.first().json;\nconst researchOutput = inputData.output || inputData.text || JSON.stringify(inputData);\n\nconst strategistData = $('Build Strategist Prompt').first().json;\nconst researchPromptData = $('Build Research Prompt').first().json;\nconst strategistOutput = researchPromptData.strategistOutput || '';\n\nconst profile = strategistData.profile;\nconst question = strategistData.question;\nconst articleUrl = strategistData.articleUrl;\nconst chatId = strategistData.chatId;\nconst userId = strategistData.userId;\nconst targetLength = strategistData.targetLength || '1500-2000';\n\nconst expertiseList = (profile.expertise_ru || profile.expertise || []).map(e => `- ${e}`).join('\\n');\nconst doNotSayList = (profile.do_not_say_ru || profile.do_not_say || []).map(d => `- ${d}`).join('\\n');\nconst talkingPoints = (profile.talking_points_ru || profile.talking_points || []).map(t => `- ${t}`).join('\\n');\nconst careerHighlights = (profile.career_highlights_ru || profile.career_highlights || []).map(c => `- ${c}`).join('\\n');\n\nconst speakerName = profile.name_ru || profile.name || 'Мария Архангельская';\nconst speakerTitle = profile.title_ru || profile.title || 'CEO & Managing Partner';\nconst company = profile.company || 'DDVB';\n\nconst systemMessage = `You are the ghostwriter for ${speakerName}, ${speakerTitle} at ${company}. Write an expert media comment in Russian.\n\n## SPEAKER PROFILE\n**Expertise:**\n${expertiseList || 'General Business'}\n${talkingPoints ? '**Talking Points:**\\n' + talkingPoints + '\\n' : ''}${doNotSayList ? '**DO NOT SAY:**\\n' + doNotSayList + '\\n' : ''}${careerHighlights ? '**Highlights:**\\n' + careerHighlights + '\\n' : ''}\n## TECHNICAL CONSTRAINTS\n- **Length:** Target approximately ${targetLength} characters.\n- **Format:** Flowing prose ONLY. No headers, no bullet points, no bold text, no structural markers.\n- **Language:** Russian only. Use guillemets («») and em-dashes (—).\n\n## ANTI-AI RULES\n- NO generic openings (e.g., «Сегодня мы наблюдаем...», «В современном мире...»).\n- NO balanced/neutral structures (e.g., «С одной стороны... с другой...»).\n- DO write in the first person («Я считаю», «Мы в ${company} видим»).\n- DO jump straight into the core argument. Use sharp, opinionated, and professional executive language.\n\nReturn ONLY the final Russian comment text.`;\n\nconst userMessage = `Write a ${targetLength}-character Russian media comment for ${speakerName}.\n\n**Journalist's Question:** ${question}\n\n**Article URL:** ${articleUrl}\n\n---\n## Strategist's Analysis & Communication Brief:\n${strategistOutput}\n\n---\n## Research Report:\n${researchOutput}\n\n---\nRemember: EXACTLY ${targetLength} characters in Russian. Return ONLY the comment text, nothing else.`;\n\nreturn [{\n  json: {\n    systemMessage,\n    userMessage,\n    profile,\n    question,\n    articleUrl,\n    chatId,\n    userId,\n    researchOutput,\n    strategistOutput,\n    targetLength,\n  },\n}];"
+      },
+      "id": "b2-0015-4000-8000-000000000015",
+      "name": "Build Writer Prompt",
+      "position": [
+        688,
+        80
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.userMessage }}",
+        "options": {
+          "systemMessage": "={{ $json.systemMessage }}"
+        }
+      },
+      "id": "b2-0016-4000-8000-000000000016",
+      "name": "Writer Agent",
+      "position": [
+        960,
+        80
+      ],
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "model": {
+          "value": "claude-sonnet-4-5-20250929"
+        },
+        "options": {}
+      },
+      "id": "b2-0017-4000-8000-000000000017",
+      "name": "Writer Model",
+      "position": [
+        880,
+        304
+      ],
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.3,
+      "credentials": {
+        "anthropicApi": {
+          "id": "ymGOUl4dtUS4fQuy",
+          "name": "DDVB Anthropic"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const inputData = $input.first().json || {};\nconst rawOutput = String(inputData.output || inputData.text || '').trim();\n\nfunction unwrapFences(text) {\n  return String(text || '').replace(/^```[a-zA-Z]*\\n?/,'').replace(/\\n?```$/,'').trim();\n}\n\nlet comment = '';\n\n// Match ## or ### комментарий section using Unicode to avoid encoding corruption\nconst sectionMatch = rawOutput.match(/#{2,3}\\s*комментарий\\s*[\\r\\n]+([\\s\\S]*?)(?=\\n#{2,3}|$)/i);\nif (sectionMatch && sectionMatch[1]) {\n  comment = sectionMatch[1].trim();\n}\n\n// Fallback: plain комментарий label without markdown heading\nif (!comment) {\n  const plainMatch = rawOutput.match(/комментарий[:\\s]*[\\r\\n]+([\\s\\S]*?)(?=\\n#{1,3}|$)/i);\n  if (plainMatch && plainMatch[1] && plainMatch[1].trim().length > 200) {\n    comment = plainMatch[1].trim();\n  }\n}\n\n// Fallback: extract everything after any комментарий occurrence\nif (!comment) {\n  const broadMatch = rawOutput.match(/комментарий[\\s\\S]{0,5}\\n([\\s\\S]+)/i);\n  if (broadMatch && broadMatch[1] && broadMatch[1].trim().length > 200) {\n    comment = broadMatch[1].trim();\n    const checkIdx = comment.search(/\\n#{1,3}/i);\n    if (checkIdx > 0) comment = comment.substring(0, checkIdx).trim();\n  }\n}\n\n// Fallback: find largest quoted block («» or \"\")\nif (!comment) {\n  const quoteMatch = rawOutput.match(/[«\"][\\s\\S]{280,}[»\"]/);\n  if (quoteMatch) comment = quoteMatch[0].trim();\n}\n\n// Final fallback: use full output\nif (!comment) {\n  comment = rawOutput;\n}\n\ncomment = unwrapFences(comment);\n\nif (!comment && rawOutput) {\n  comment = unwrapFences(rawOutput);\n}\n\nreturn [{\n  json: {\n    ...inputData,\n    fullOutput: rawOutput,\n    comment,\n    charCount: String(comment || '').length,\n  },\n}];"
+      },
+      "id": "b2-0018-4000-8000-000000000018",
+      "name": "Extract Comment",
+      "position": [
+        1248,
+        80
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "jsCode": "const inputData = $input.first().json || {};\nconst profile = inputData.profile || {};\nconst targetLength = inputData.targetLength || '1500-2000';\nconst retryUsed = Boolean(inputData.retryUsed);\nconst retryInstructions = String(inputData.retryInstructions || '').trim();\n\nconst comment = String(inputData.comment || inputData.fullOutput || '').trim();\n\nconst retryBlock = retryUsed && retryInstructions\n  ? `\\n\\nRETRY MODE:\\n${retryInstructions}\\n- Fix the specific issues from the previous attempt\\n- Do not repeat the same mistakes\\n`\n  : '';\n\nconst speakerName = profile.name_ru || profile.name || 'Мария Архангельская';\nconst speakerTitle = profile.title_ru || profile.title || 'CEO';\n\nconst humanizerSystemMessage = `You are a Russian business editor specializing in executive communications. Your task is to lightly humanize the provided expert comment so it sounds like a real executive quote.\n\nCRITICAL RULES:\n1. DO NOT REWRITE THE COMMENT ENTIRELY. Strictly preserve the original structure, meaning, key arguments, facts, statistics, and examples.\n2. Only make minor edits to remove obvious AI patterns (generic openings, «balanced» constructions) and add slight natural speech characteristics (parenthetical remarks, strong opinions).\n3. Output MUST be in Russian only. Never switch to English.\n4. Output MUST be ${targetLength} characters long (±10%). If too long, condense naturally without rewriting. If too short, expand with natural elaboration.\n5. Use Russian punctuation: «» for quotes, — for em-dashes.\n6. Return ONLY the final comment text. No headers, no labels, no metadata.${retryBlock}`;\n\nconst humanizerUserMessage = `Speaker: ${speakerName}\\nTitle: ${speakerTitle}\\nTarget length: ${targetLength} characters (HARD requirement — will be rejected if outside ±10% of this range)\\n\\nComment to humanize (DO NOT rewrite entirely, just edit for natural tone):\\n${comment}\\n\\n${retryInstructions ? retryInstructions + '\\\\n\\\\n' : ''}Output: Return ONLY the lightly edited comment in Russian. Adjust length to fit ${targetLength} characters (±10%).`;\n\nreturn [{\n  json: {\n    ...inputData,\n    humanizerSystemMessage,\n    humanizerUserMessage,\n    retryUsed,\n  },\n}];"
+      },
+      "id": "b2-0019-4000-8000-000000000019",
+      "name": "Build Humanizer Prompt",
+      "position": [
+        1440,
+        80
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.humanizerUserMessage }}",
+        "options": {
+          "systemMessage": "={{ $json.humanizerSystemMessage }}"
+        }
+      },
+      "id": "b2-0020-4000-8000-000000000020",
+      "name": "Humanizer Agent",
+      "position": [
+        1648,
+        80
+      ],
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "model": {
+          "value": "gpt-4o"
+        },
+        "options": {}
+      },
+      "id": "b2-0021-4000-8000-000000000021",
+      "name": "Humanizer Model (GPT-4o)",
+      "position": [
+        1568,
+        304
+      ],
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "credentials": {
+        "openAiApi": {
+          "id": "vMHSP02jcq5bmgAi",
+          "name": "DDVB OpenAI"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const inputData = $input.first().json || {};\nconst promptData = $('Build Humanizer Prompt').first().json || {};\n\nconst rawHumanized = String(inputData.output || inputData.text || inputData.response || '').trim();\nconst fallbackComment = String(promptData.comment || '').trim();\n\nfunction looksTemplate(text) {\n  const t = String(text || '').trim();\n  if (!t) return true;\n  if (t.length < 160) return true;\n  // Only catch clear AI refusal patterns — NOT bare 'шаблон' which is a legitimate branding adjective\n  return /(without the specific input text|please provide the text|provide text|предоставьте|шаблонный ответ|шаблонный текст|введите текст)/i.test(t);\n}\n\nlet comment = rawHumanized;\nlet usedFallbackComment = false;\nif (looksTemplate(rawHumanized) && fallbackComment.length > 300) {\n  comment = fallbackComment;\n  usedFallbackComment = true;\n}\n\nconst targetLength = String(promptData.targetLength || '1500-2000');\nconst targetMin = parseInt(targetLength.split('-')[0], 10) || 1200;\nconst targetMax = parseInt(targetLength.split('-')[1] || targetLength.split('-')[0], 10) || 2200;\n\nconst warnings = [];\nconst critical = [];\n\nconst charCount = comment.length;\nif (charCount < Math.floor(targetMin * 0.85)) {\n  const msg = `Слишком коротко: ${charCount} символов (минимум ~${targetMin})`;\n  warnings.push(msg);\n  critical.push(msg);\n}\nif (charCount > Math.ceil(targetMax * 1.15)) {\n  const msg = `Слишком длинно: ${charCount} символов (максимум ~${targetMax})`;\n  warnings.push(msg);\n  critical.push(msg);\n}\n\n// Cyrillic character detection\nconst cyrillicCount = (comment.match(/[а-яА-ЯёЁ]/g) || []).length;\nif (cyrillicCount < 120) {\n  const msg = 'Недостаточно кириллицы в тексте';\n  warnings.push(msg);\n  critical.push(msg);\n}\n\n// Catch AI refusal markers and unfilled placeholders ONLY\n// 'шаблонные' alone is valid branding vocabulary — only flag specific refusal contexts\nif (/(without the specific input text|please provide the text|provide text|предоставьте|шаблонный ответ|шаблонный текст|\\[([A-Z_]+)\\]|\\{\\{[^}]+\\}\\})/i.test(comment)) {\n  const msg = 'Обнаружены шаблонные фразы/маркеры';\n  warnings.push(msg);\n  critical.push(msg);\n}\n\nconst question = String(promptData.question || '').toLowerCase();\nconst questionWords = question.split(/\\s+/).filter((w) => w.length > 4);\nconst loweredComment = comment.toLowerCase();\nconst matched = questionWords.filter((w) => loweredComment.includes(w));\nconst questionRelevance = questionWords.length === 0 ? true : matched.length > 0;\nif (!questionRelevance) {\n  const msg = 'Комментарий не отвечает на вопрос пользователя';\n  warnings.push(msg);\n  critical.push(msg);\n}\n\nconst passed = critical.length === 0;\n\nreturn [{\n  json: {\n    ...promptData,\n    comment,\n    charCount,\n    passed,\n    warnings,\n    criticalWarnings: critical,\n    questionRelevance,\n    retryUsed: Boolean(promptData.retryUsed),\n    hasGuillemets: /[«»]/.test(comment),\n    hasEmDash: /—/.test(comment),\n    usedFallbackComment,\n    rawHumanized,\n  },\n}];"
+      },
+      "id": "b2-0022-4000-8000-000000000022",
+      "name": "Compliance Review",
+      "position": [
+        1920,
+        80
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format the final comment for Telegram delivery\n\nconst inputData = $input.first().json;\nconst comment = inputData.comment || '';\nconst charCount = inputData.charCount || comment.length;\nconst passed = inputData.passed !== false;\nconst warnings = inputData.warnings || [];\nconst question = inputData.question || '';\n\n// Get profile from Finalize Profile node (Compliance Review doesn't forward profile)\nconst profileData = $('Finalize Profile').first().json;\nconst profile = profileData.profile || {};\nconst nameRu = profile.name_ru || 'Мария Архангельская';\nconst titleRu = profile.title_ru || 'Генеральный директор и управляющий партнёр';\nconst company = profile.company || 'DDVB';\n\nconst outputText = `Спикер: ${nameRu}\\n${titleRu}, ${company}\\n\\n${comment}`;\n\nreturn [{\n  json: {\n    ...inputData,\n    telegramText: outputText\n  }\n}];"
+      },
+      "id": "b2-0023-4000-8000-000000000023",
+      "name": "Format Telegram Output",
+      "position": [
+        2816,
+        80
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.message }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "b2-0024-4000-8000-000000000024",
+      "name": "Send Final Comment",
+      "position": [
+        3072,
+        80
+      ],
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "webhookId": "371f3f46-fe33-43cb-a91d-d5c892760665",
+      "credentials": {
+        "telegramApi": {
+          "id": "BnEQsFHcvbF7jdMc",
+          "name": "DDVB Marketing Workspace"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "chatId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $(\"Parse Request\").first().json.chatId || $(\"Parse Request\").first().json.userId }}"
+        },
+        "text": "=❌ Ошибка v2.0\n\nДетали: {{ $json.error ? $json.error.message : ($json.errorMessage || 'Неизвестная ошибка') }}",
+        "additionalFields": {}
+      },
+      "id": "b2-0025-4000-8000-000000000025",
+      "name": "Send Error: Workflow Failed",
+      "position": [
+        608,
+        -208
+      ],
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "webhookId": "06c252de-33d6-4577-ab1a-77e193bed4f1",
+      "credentials": {
+        "telegramApi": {
+          "id": "otGunkSSnwzGsnSm",
+          "name": "DDVB Test Bot"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "version": 2,
+            "typeValidation": "strict",
+            "leftValue": ""
+          },
+          "conditions": [
+            {
+              "operator": {
+                "operation": "equals",
+                "type": "string"
+              },
+              "id": "route-web",
+              "rightValue": "web",
+              "leftValue": "={{ $(\"Parse Request\").first().json.source }}"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {
+          "ignoreCase": false
+        }
+      },
+      "id": "b2-0043-4000-8000-000000000043",
+      "name": "Route Output",
+      "position": [
+        2512,
+        64
+      ],
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "jsCode": "const CALLBACK_API_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2NzczNjJiYy00ZDBjLTQ5NTEtODhiOC01MGIwODFlMThkNTAiLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwianRpIjoiZjdkMDI4NGMtYzI5Mi00NzU5LWJhZGMtM2ZkNzY0ZWFkMWY0IiwiaWF0IjoxNzczODcyNTU3fQ.pDlk9uLspRW-IGs51UxXuP_tjEG6bCocV_rwQ1Xgzxc';\n\nconst data = $input.first().json || {};\nconst parseData = $('Parse Request').first().json || {};\n\n// Defensive: strip \\r\\n from callbackUrl in case upstream missed it\nconst callbackUrl = String(parseData.callbackUrl || '').replace(/[\\r\\n]/g, '').trim();\nconst callbackValid = /^https?:\\/\\//i.test(callbackUrl);\n\nconst payload = {\n  jobId: parseData.jobId || null,\n  status: data.qualityPassed === false ? 'failed' : 'completed',\n  workflowType: 'media_comment',\n  result: {\n    content: data.comment || '',\n    charCount: data.charCount || String(data.comment || '').length,\n    speakerName: (data.profile || {}).name_ru || (data.profile || {}).name || '',\n    speakerTitle: (data.profile || {}).title_ru || (data.profile || {}).title || '',\n    compliancePassed: data.passed !== false,\n    qualityPassed: data.qualityPassed !== false,\n    qualityReasons: data.qualityReasons || [],\n    warnings: data.warnings || [],\n    metadata: {\n      profileSource: data.profileSource || null,\n      profileRequested: data.profileRequested || null,\n      profileResolved: data.profileResolved || null,\n      targetLength: data.targetLength || null,\n      retryUsed: Boolean(data.retryUsed),\n    },\n  },\n  executionTime: data.executionTime || 0,\n  timestamp: new Date().toISOString(),\n};\n\nreturn [{\n  json: {\n    ...data,\n    callbackUrl,\n    callbackValid,\n    apiKey: CALLBACK_API_KEY,\n    payload,\n  },\n}];"
+      },
+      "id": "b2-0044-4000-8000-000000000044",
+      "name": "Build Web Callback",
+      "position": [
+        2768,
+        -160
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.callbackUrl }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-DDVB-API-Key",
+              "value": "={{ $json.apiKey }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.payload) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "b2-0045-4000-8000-000000000045",
+      "name": "Send Web Callback",
+      "position": [
+        3168,
+        -176
+      ],
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json || {};\nconst body = input.body || input;\nconst headers = input.headers || {};\n\nconst person = body.person || 'maria';\nconst articleUrl = body.articleUrl || '';\nconst question = body.question || '';\nconst jobId = body.jobId || '';\n// Strip accidental newlines AND carriage returns from callbackUrl (env var safety)\nconst callbackUrl = (body.callbackUrl || '').replace(/[\\r\\n]/g, '').trim();\nconst apiKey = headers['x-ddvb-api-key'] || headers['X-DDVB-API-Key'] || body.apiKey || '';\n\nconst messageText = [\n  'PERSON: ' + person,\n  'LINK: ' + articleUrl,\n  'QUESTION: ' + question,\n].join('\\n');\n\nreturn [{\n  json: {\n    messageText,\n    chatId: '0',\n    userId: '0',\n    source: 'web',\n    jobId,\n    callbackUrl,\n    apiKey,\n  },\n}];"
+      },
+      "id": "73370131-ab35-44a6-bb52-4fcb54bf683b",
+      "name": "Normalize Web Input",
+      "position": [
+        -2544,
+        304
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: \"accepted\", jobId: $json.jobId }) }}",
+        "options": {
+          "responseCode": 202
+        }
+      },
+      "id": "7b4145f9-a103-4f99-b8ea-932a3ec79c03",
+      "name": "Respond 202",
+      "position": [
+        -2400,
+        128
+      ],
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "operation": "get",
+        "owner": {
+          "__rl": true,
+          "mode": "name",
+          "value": "cybernexcorps"
+        },
+        "repository": {
+          "__rl": true,
+          "mode": "name",
+          "value": "ceo-comment-writer"
+        },
+        "filePath": "profiles/default.json",
+        "asBinaryProperty": false,
+        "additionalParameters": {
+          "reference": "main"
+        }
+      },
+      "type": "n8n-nodes-base.github",
+      "id": "b2-0101-4000-8000-000000000101",
+      "name": "Get Default Profile",
+      "typeVersion": 1.1,
+      "position": [
+        -272,
+        -368
+      ],
+      "webhookId": "94e7a90f-ad81-4e00-ab62-97d62b225184",
+      "credentials": {
+        "githubApi": {
+          "id": "pGlylAmPTa6t4Io0",
+          "name": "GitHub account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "rightValue": "={{ true }}",
+              "leftValue": "={{ $json.requestedProfileValid }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              },
+              "id": "requested-profile-valid"
+            }
+          ],
+          "options": {
+            "typeValidation": "strict",
+            "caseSensitive": true,
+            "leftValue": "",
+            "version": 1
+          }
+        },
+        "options": {
+          "ignoreCase": false
+        }
+      },
+      "type": "n8n-nodes-base.if",
+      "id": "b2-0102-4000-8000-000000000102",
+      "name": "Requested Profile Valid?",
+      "typeVersion": 2,
+      "position": [
+        -1328,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json || {};\n\nconst requestedProfile = data.requestedProfile && typeof data.requestedProfile === 'object' ? data.requestedProfile : null;\nconst defaultProfile = data.defaultProfile && typeof data.defaultProfile === 'object' ? data.defaultProfile : null;\n\nconst hardFallback = {\n  id: 'maria_arkhangelskaya',\n  name_ru: 'Мария Архангельская',\n  name_en: 'Maria Arkhangelskaya',\n  title_ru: 'Генеральный директор и управляющий партнёр',\n  title_en: 'CEO and Managing Partner',\n  company: 'DDVB',\n  expertise: ['брендинг', 'маркетинг', 'PR'],\n  key_theses: ['Бренд — это стратегия', 'Репутация строится годами'],\n  communication_style: 'деловой, экспертный',\n  forbidden_phrases: [],\n  example_comments: [],\n  target_comment_length: '1500-2000'\n};\n\nconst profile = requestedProfile || defaultProfile || hardFallback;\n\nreturn [{\n  json: {\n    ...data,\n    profile\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "id": "b2-0103-4000-8000-000000000103",
+      "name": "Finalize Profile",
+      "typeVersion": 2,
+      "position": [
+        -1008,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "version": 2,
+            "typeValidation": "strict",
+            "leftValue": ""
+          },
+          "conditions": [
+            {
+              "operator": {
+                "operation": "equals",
+                "type": "boolean"
+              },
+              "id": "callback-valid",
+              "rightValue": "={{ true }}",
+              "leftValue": "={{ $json.callbackValid }}"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {
+          "ignoreCase": false
+        }
+      },
+      "type": "n8n-nodes-base.if",
+      "id": "b2-0104-4000-8000-000000000104",
+      "name": "Callback URL Valid?",
+      "typeVersion": 2,
+      "position": [
+        2944,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json || {};\nconst comment = String(data.comment || '').trim();\nconst reasons = [];\n\nif (!data.passed) {\n  reasons.push(...(data.criticalWarnings || data.warnings || []));\n}\n\nconst targetLength = String(data.targetLength || '1200-1800');\nconst targetMin = parseInt(targetLength.split('-')[0]) || 1200;\nconst targetMax = parseInt(targetLength.split('-')[1]) || 1800;\nconst tolerance = 0.15;\nconst minLen = Math.floor(targetMin * (1 - tolerance));\nconst maxLen = Math.ceil(targetMax * (1 + tolerance));\n\nconst charCount = comment.length;\nif (charCount < minLen) {\n  reasons.push(`Слишком коротко: ${charCount} символов (мин. ${minLen})`);\n}\nif (charCount > maxLen) {\n  reasons.push(`Слишком длинно: ${charCount} символов (макс. ${maxLen})`);\n}\n\nconst cyrillicCount = (comment.match(/[а-яёА-ЯЁ]/g) || []).length;\nif (cyrillicCount < 100) {\n  reasons.push(`Мало кириллицы: ${cyrillicCount} символов`);\n}\n\nconst emojiMatch = comment.match(/[\\u{1F600}-\\u{1F64F}\\u{1F300}-\\u{1F5FF}\\u{1F680}-\\u{1F6FF}\\u{2600}-\\u{26FF}\\u{2700}-\\u{27BF}]/gu) || [];\nif (emojiMatch.length > 0) {\n  reasons.push(`Найдены эмодзи: ${emojiMatch.length} шт`);\n}\n\nconst passed = reasons.length === 0;\n\nreturn [{\n  json: {\n    ...data,\n    passed,\n    qualityPassed: passed,\n    qualityReasons: reasons,\n    charCount\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "id": "b2-0105-4000-8000-000000000105",
+      "name": "Quality Gate",
+      "typeVersion": 2,
+      "position": [
+        2096,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "rightValue": "={{ true }}",
+              "leftValue": "={{ $json.qualityPassed }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              },
+              "id": "quality-pass"
+            }
+          ],
+          "options": {
+            "typeValidation": "strict",
+            "caseSensitive": true,
+            "leftValue": "",
+            "version": 1
+          }
+        },
+        "options": {
+          "ignoreCase": false
+        }
+      },
+      "type": "n8n-nodes-base.if",
+      "id": "b2-0106-4000-8000-000000000106",
+      "name": "Quality Passed?",
+      "typeVersion": 2,
+      "position": [
+        2288,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "rightValue": "={{ false }}",
+              "leftValue": "={{ $json.retryUsed }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              },
+              "id": "retry-allowed"
+            }
+          ],
+          "options": {
+            "typeValidation": "strict",
+            "caseSensitive": true,
+            "leftValue": "",
+            "version": 1
+          }
+        },
+        "options": {
+          "ignoreCase": false
+        }
+      },
+      "type": "n8n-nodes-base.if",
+      "id": "b2-0107-4000-8000-000000000107",
+      "name": "Retry Allowed?",
+      "typeVersion": 2,
+      "position": [
+        2528,
+        288
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nreturn [{\n  json: {\n    ...data,\n    retryUsed: true,\n    retryInstructions: 'RETRY_MODE: The previous attempt failed quality review. Please improve the comment quality, fix any issues flagged, and do not repeat the same mistakes.',\n  },\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "id": "b2-0108-4000-8000-000000000108",
+      "name": "Prepare Retry Input",
+      "typeVersion": 2,
+      "position": [
+        2848,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "operation": "get",
+        "owner": {
+          "__rl": true,
+          "mode": "name",
+          "value": "cybernexcorps"
+        },
+        "repository": {
+          "__rl": true,
+          "mode": "name",
+          "value": "ceo-comment-writer"
+        },
+        "filePath": "={{ 'profiles/' + $('Parse Request').first().json.requestedProfileId + '.json' }}",
+        "asBinaryProperty": false,
+        "additionalParameters": {
+          "reference": "main"
+        }
+      },
+      "typeVersion": 1.1,
+      "type": "n8n-nodes-base.github",
+      "name": "Fetch Requested Profile Raw Fallback",
+      "id": "b2-0109-4000-8000-000000000109",
+      "position": [
+        -944,
+        -144
+      ],
+      "webhookId": "58e70bf8-6f2e-492f-be2e-3a5ac269d43f",
+      "credentials": {
+        "githubApi": {
+          "id": "pGlylAmPTa6t4Io0",
+          "name": "GitHub account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "function parseProfile(payload) {\n  if (!payload || typeof payload !== 'object') return null;\n  if (payload.profile_id) return payload;\n  if (typeof payload.content === 'string') {\n    try {\n      const decoded = Buffer.from(payload.content, 'base64').toString('utf8');\n      return JSON.parse(decoded);\n    } catch (_) {\n      return null;\n    }\n  }\n  return null;\n}\n\nconst base = $('Parse Profile').first().json;\nconst fallbackRaw = $input.first().json || {};\nconst parsedFallback = parseProfile(fallbackRaw);\nconst fallbackValid = Boolean(parsedFallback && parsedFallback.active === true);\n\nconst requestedProfile = fallbackValid ? parsedFallback : (base.requestedProfile || null);\nconst requestedProfileValid = Boolean(fallbackValid || base.requestedProfileValid);\n\nreturn [{\n  json: {\n    ...base,\n    requestedProfile,\n    requestedProfileValid,\n    profileResolutionHint: requestedProfileValid ? 'requested_active' : 'fallback_default',\n    profileFetchError: requestedProfileValid ? null : (base.profileFetchError || fallbackRaw.error || null),\n    fallbackFetchError: fallbackRaw.error || null,\n  },\n}];"
+      },
+      "typeVersion": 2,
+      "type": "n8n-nodes-base.code",
+      "name": "Parse Requested Profile Fallback",
+      "id": "b2-0110-4000-8000-000000000110",
+      "position": [
+        -752,
+        -144
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "version": 1,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "fallback-requested-profile-valid",
+              "operator": {
+                "operation": "equals",
+                "type": "boolean"
+              },
+              "leftValue": "={{ $json.requestedProfileValid }}",
+              "rightValue": "={{ true }}"
+            }
+          ]
+        },
+        "options": {
+          "ignoreCase": false
+        }
+      },
+      "typeVersion": 2,
+      "type": "n8n-nodes-base.if",
+      "name": "Fallback Requested Profile Valid?",
+      "id": "b2-0111-4000-8000-000000000111",
+      "position": [
+        -544,
+        -144
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "function parseGithubFile(payload) {\n  if (!payload || typeof payload !== 'object') return null;\n  if (payload.profile_id) return payload;\n  if (typeof payload.content === 'string') {\n    try {\n      const decoded = Buffer.from(payload.content, 'base64').toString('utf8');\n      return JSON.parse(decoded);\n    } catch (_) {\n      return null;\n    }\n  }\n  return null;\n}\n\nconst defaultRaw = $input.first().json || {};\nconst defaultProfile = parseGithubFile(defaultRaw);\n\nlet base = {};\ntry {\n  base = $('Parse Requested Profile Fallback').first().json;\n} catch (_) {\n  try {\n    base = $('Parse Profile').first().json;\n  } catch (_) {\n    base = {};\n  }\n}\n\nreturn [{\n  json: {\n    ...base,\n    defaultProfile,\n  },\n}];"
+      },
+      "id": "b2-0112-4000-8000-000000000112",
+      "typeVersion": 2,
+      "type": "n8n-nodes-base.code",
+      "position": [
+        -1328,
+        272
+      ],
+      "name": "Prepare Finalize With Default"
+    },
+    {
+      "parameters": {
+        "model": "sonar-pro",
+        "messages": {
+          "message": [
+            {
+              "content": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('message0_Text', ``, 'string') }}"
+            }
+          ]
+        },
+        "simplify": true,
+        "options": {
+          "searchRecency": "month"
+        },
+        "requestOptions": {}
+      },
+      "id": "perplexity-tool-v2-001",
+      "name": "Perplexity Research Tool",
+      "type": "n8n-nodes-base.perplexityTool",
+      "typeVersion": 1,
+      "position": [
+        416,
+        256
+      ],
+      "credentials": {
+        "perplexityApi": {
+          "id": "um7RpJwg4207ROLP",
+          "name": "Perplexity account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const EXPECTED_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2NzczNjJiYy00ZDBjLTQ5NTEtODhiOC01MGIwODFlMThkNTAiLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwianRpIjoiZjdkMDI4NGMtYzI5Mi00NzU5LWJhZGMtM2ZkNzY0ZWFkMWY0IiwiaWF0IjoxNzczODcyNTU3fQ.pDlk9uLspRW-IGs51UxXuP_tjEG6bCocV_rwQ1Xgzxc';\nconst incoming = $input.first();\nconst headers = incoming.json.headers || {};\nconst receivedKey = headers['x-ddvb-api-key'] || headers['X-DDVB-API-Key'] || '';\nif (receivedKey.trim() !== EXPECTED_KEY.trim()) {\n  throw new Error('Unauthorized: invalid or missing X-DDVB-API-Key');\n}\nconst body = incoming.json.body || incoming.json;\nreturn [{ json: body }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2720,
+        16
+      ],
+      "id": "d1bf57a3-03c5-45cd-a154-559b47ecf188",
+      "name": "Validate API Key"
+    }
+  ],
+  "connections": {
+    "Build Humanizer Prompt": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Humanizer Agent",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Build Research Prompt": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Research Agent",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Build Strategist Prompt": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Strategist Agent",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Build Web Callback": {
+      "main": [
+        [
+          {
+            "type": "main",
+            "index": 0,
+            "node": "Callback URL Valid?"
+          }
+        ]
+      ]
+    },
+    "Build Writer Prompt": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Writer Agent",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Compliance Review": {
+      "main": [
+        [
+          {
+            "type": "main",
+            "index": 0,
+            "node": "Quality Gate"
+          }
+        ]
+      ]
+    },
+    "Extract Comment": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Build Humanizer Prompt",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Fetch Profile from GitHub": {
+      "main": [
+        [
+          {
+            "node": "Parse Profile",
+            "index": 0,
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Format Telegram Output": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Send Final Comment",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Humanizer Agent": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Compliance Review",
+            "type": "main"
+          }
+        ],
+        [
+          {
+            "index": 0,
+            "node": "Send Error: Workflow Failed",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Humanizer Model (GPT-4o)": {
+      "ai_languageModel": [
+        [
+          {
+            "index": 0,
+            "node": "Humanizer Agent",
+            "type": "ai_languageModel"
+          }
+        ]
+      ]
+    },
+    "Normalize Web Input": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Respond 202",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Parse Profile": {
+      "main": [
+        [
+          {
+            "node": "Requested Profile Valid?",
+            "index": 0,
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Parse Request": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Validate Fields",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Research Agent": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Build Writer Prompt",
+            "type": "main"
+          }
+        ],
+        [
+          {
+            "index": 0,
+            "node": "Send Error: Workflow Failed",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Research Model": {
+      "ai_languageModel": [
+        [
+          {
+            "index": 0,
+            "node": "Research Agent",
+            "type": "ai_languageModel"
+          }
+        ]
+      ]
+    },
+    "Respond 202": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Parse Request",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Route Output": {
+      "main": [
+        [
+          {
+            "type": "main",
+            "index": 0,
+            "node": "Build Web Callback"
+          }
+        ],
+        [
+          {
+            "type": "main",
+            "index": 0,
+            "node": "Format Telegram Output"
+          }
+        ]
+      ]
+    },
+    "Strategist Agent": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Build Research Prompt",
+            "type": "main"
+          }
+        ],
+        [
+          {
+            "index": 0,
+            "node": "Send Error: Workflow Failed",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Strategist Model": {
+      "ai_languageModel": [
+        [
+          {
+            "index": 0,
+            "node": "Strategist Agent",
+            "type": "ai_languageModel"
+          }
+        ]
+      ]
+    },
+    "Strategist Tavily Extract Tool": {
+      "ai_tool": [
+        [
+          {
+            "index": 0,
+            "node": "Strategist Agent",
+            "type": "ai_tool"
+          }
+        ]
+      ]
+    },
+    "Validate Fields": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Fetch Profile from GitHub",
+            "type": "main"
+          }
+        ],
+        [
+          {
+            "index": 0,
+            "node": "Send Error: Missing Fields",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "type": "main",
+            "index": 0,
+            "node": "Validate API Key"
+          }
+        ]
+      ]
+    },
+    "When Called by Router": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Parse Request",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Writer Agent": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Extract Comment",
+            "type": "main"
+          }
+        ],
+        [
+          {
+            "index": 0,
+            "node": "Send Error: Workflow Failed",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Writer Model": {
+      "ai_languageModel": [
+        [
+          {
+            "index": 0,
+            "node": "Writer Agent",
+            "type": "ai_languageModel"
+          }
+        ]
+      ]
+    },
+    "Requested Profile Valid?": {
+      "main": [
+        [
+          {
+            "type": "main",
+            "index": 0,
+            "node": "Finalize Profile"
+          }
+        ],
+        [
+          {
+            "type": "main",
+            "index": 0,
+            "node": "Fetch Requested Profile Raw Fallback"
+          }
+        ]
+      ]
+    },
+    "Get Default Profile": {
+      "main": [
+        [
+          {
+            "type": "main",
+            "index": 0,
+            "node": "Prepare Finalize With Default"
+          }
+        ]
+      ]
+    },
+    "Finalize Profile": {
+      "main": [
+        [
+          {
+            "node": "Build Strategist Prompt",
+            "index": 0,
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Quality Gate": {
+      "main": [
+        [
+          {
+            "type": "main",
+            "index": 0,
+            "node": "Quality Passed?"
+          }
+        ]
+      ]
+    },
+    "Quality Passed?": {
+      "main": [
+        [
+          {
+            "type": "main",
+            "index": 0,
+            "node": "Route Output"
+          }
+        ],
+        [
+          {
+            "type": "main",
+            "index": 0,
+            "node": "Retry Allowed?"
+          }
+        ]
+      ]
+    },
+    "Retry Allowed?": {
+      "main": [
+        [
+          {
+            "type": "main",
+            "index": 0,
+            "node": "Prepare Retry Input"
+          }
+        ],
+        [
+          {
+            "type": "main",
+            "index": 0,
+            "node": "Send Error: Workflow Failed"
+          }
+        ]
+      ]
+    },
+    "Prepare Retry Input": {
+      "main": [
+        [
+          {
+            "type": "main",
+            "index": 0,
+            "node": "Build Humanizer Prompt"
+          }
+        ]
+      ]
+    },
+    "Callback URL Valid?": {
+      "main": [
+        [
+          {
+            "type": "main",
+            "index": 0,
+            "node": "Send Web Callback"
+          }
+        ]
+      ]
+    },
+    "Fetch Requested Profile Raw Fallback": {
+      "main": [
+        [
+          {
+            "type": "main",
+            "index": 0,
+            "node": "Parse Requested Profile Fallback"
+          }
+        ]
+      ]
+    },
+    "Parse Requested Profile Fallback": {
+      "main": [
+        [
+          {
+            "type": "main",
+            "index": 0,
+            "node": "Fallback Requested Profile Valid?"
+          }
+        ]
+      ]
+    },
+    "Fallback Requested Profile Valid?": {
+      "main": [
+        [
+          {
+            "type": "main",
+            "index": 0,
+            "node": "Finalize Profile"
+          }
+        ],
+        [
+          {
+            "type": "main",
+            "index": 0,
+            "node": "Get Default Profile"
+          }
+        ]
+      ]
+    },
+    "Prepare Finalize With Default": {
+      "main": [
+        [
+          {
+            "type": "main",
+            "index": 0,
+            "node": "Finalize Profile"
+          }
+        ]
+      ]
+    },
+    "Perplexity Research Tool": {
+      "ai_tool": [
+        [
+          {
+            "node": "Research Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate API Key": {
+      "main": [
+        [
+          {
+            "type": "main",
+            "index": 0,
+            "node": "Normalize Web Input"
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  }
+}
