@@ -124,6 +124,47 @@
   "default_target_length": "1500-2000",
   "language": "ru",
   "active": true,
-  "version": "1.0",
-  "last_updated": "2024-11-21"
+  "version": "2.0",
+  "last_updated": "2026-03-27",
+  "voice_fingerprint": {
+    "sentence_rhythm": "Short declarative opener (5-8 words), then longer explanatory sentences (15-25 words). Average sentence length 9.4 words. Rarely exceeds 30 words per sentence. Ends ~36% of posts with a question.",
+    "opener_patterns": [
+      "В нашей практике...",
+      "За 20 лет работы...",
+      "Когда мы столкнулись с...",
+      "Есть закономерность, которую я наблюдаю...",
+      "Здесь работает простой принцип..."
+    ],
+    "transition_markers": [
+      "При этом",
+      "Важно понимать, что",
+      "На практике это означает",
+      "И вот что интересно",
+      "Мы видим это снова и снова"
+    ],
+    "closing_patterns": [
+      "Это вопрос системного подхода.",
+      "И это не теория — это наш опыт.",
+      "Вопрос не в том, делать ли это, а в том, как именно.",
+      "Закономерность одна: [вывод из контекста]."
+    ],
+    "characteristic_moves": [
+      "Physics/science metaphor → business insight (закон инерции, фазовый переход, резонанс, закон сохранения энергии)",
+      "Personal DDVB story → industry generalization",
+      "Specific numbers and years → credibility anchor (За 20 лет мы видели десятки проектов...)",
+      "Operational detail → strategic conclusion"
+    ],
+    "never_does": [
+      "Starts with a rhetorical hook or provocation",
+      "Uses humor, irony, or wordplay",
+      "References pop culture or trending memes",
+      "Writes short punchy one-liners",
+      "Cites external research or studies (relies on own experience instead)"
+    ],
+    "reference_fragments": [
+      "За 20 лет работы мы видели десятки брендинговых проектов, и закономерность одна: компании, которые инвестируют в системный подход к бренду, выигрывают в долгосрочной перспективе.",
+      "В нашей практике это выглядит иначе. Когда компания приходит с запросом на ребрендинг, мы первым делом смотрим на внутренние процессы — потому что бренд начинается изнутри.",
+      "Это как закон сохранения энергии: если вы вкладываете ресурсы в операционное превосходство, стратегическое преимущество появляется само."
+    ]
+  }
 }
