@@ -1,6 +1,6 @@
 # AI Prompts Reference
 
-This document contains all AI prompts used in the CEO Comment Writer workflow (v2.3). These prompts are dynamically built in the n8n workflow Code nodes, but are documented here for easy reference and editing.
+This document contains all AI prompts used in the CEO Comment Writer workflow (v2.3-voice-fp). These prompts are dynamically built in the n8n workflow Code nodes, but are documented here for easy reference and editing.
 
 ## Table of Contents
 
@@ -63,6 +63,34 @@ ${profile.speaking_patterns_ru ? '\n' + profile.speaking_patterns_ru : ''}
 
 ---
 
+## VOICE FINGERPRINT (v2.3-voice-fp — Position 1, after ROLE, before everything else)
+
+Injected when the profile contains a `voice_fingerprint` object. This section is the **highest priority** in the prompt — it appears before length requirements, source citations, and format rules.
+
+Contains 7 sub-fields:
+
+| Field | Purpose |
+|-------|---------|
+| `sentence_rhythm` | Concrete length patterns and cadence |
+| `opener_patterns` | 4-6 specific ways this speaker starts a comment |
+| `transition_markers` | Characteristic connecting phrases |
+| `closing_patterns` | How this speaker typically ends |
+| `characteristic_moves` | Rhetorical strategies unique to this speaker |
+| `never_does` | Anti-patterns (explicitly contrasts with other speakers) |
+| `reference_fragments` | 2-3 real sentence examples as style anchors |
+
+**Prompt framing:** "Your writing MUST match these patterns. This is non-negotiable."
+
+**Voice check at end of prompt:** When fingerprint is present, the Anti-AI Rules section includes a VOICE CHECK instruction — the model self-verifies opener pattern, never-does, and sentence rhythm before outputting.
+
+**Source data:**
+- Maria: mined from 48-post Telegram archive (`style_patterns.json`, `metaphor_index.json`)
+- Ilya: constructed from digital press portrait v2.0 + explicit contrast with Maria
+
+**Profiles:** `cybernexcorps/media-comment-generator/profiles/` on GitHub
+
+---
+
 ## CONSTRAINTS & BOUNDARIES
 
 ### What to Avoid
@@ -77,6 +105,8 @@ ${profile.preferred_structure_ru ? '\n' + profile.preferred_structure_ru : ''}
 ## CRITICAL QUALITY REQUIREMENTS
 
 Follow these requirements in order of priority:
+
+> **Note (v2.3-voice-fp):** In the actual deployed prompt, Voice Fingerprint is injected as the dominant section at position 1 (after ROLE). The priorities below (media outlet, direct answer, etc.) are secondary to voice adherence. A VOICE CHECK instruction is added at the end of the prompt when fingerprint is present. The 9-part output framework documented below is NOT used in v2.3 — the deployed prompt outputs only the comment text.
 
 ### 1. УЧЁТ СПЕЦИФИКИ СМИ (Media Outlet Adaptation)
 **Target Outlet:** ${media}

@@ -2,279 +2,110 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Repository Overview
+## Overview
 
-This repository contains an **n8n workflow automation system** (v2.3) for AI-powered ghostwriting of media comments in the voices of DDVB team members, primarily Maria Arkhangelskaya (CEO and Managing Partner).
+**Media Comment Generator** — AI-agent n8n workflow that generates expert media comments in Russian for DDVB agency speakers. Called by a Telegram Router or directly via HTTP webhook.
 
-**Current Version:** 2.3 (AI Agent with Memory + Unlimited Feedback Loop)
+**Current versions:**
+- `media-comment-generator-agent-v1.0.json` — 3-agent pipeline (deprecated/reference)
+- `media-comment-generator-agent-v2.0.json` — 4-agent pipeline with Strategist + Web webhook (active)
 
-**Key Context:**
-- Maria Arkhangelskaya: 20+ years in branding, CEO of DDVB (since 2022), systems-thinking approach
-- Purpose: Write authentic media comments for Russian industry publications (Sostav.ru, Forbes Russia, RBC, VC.ru, etc.)
-- Language: Russian (русский язык) business communication
-- Platform: n8n workflow automation + Telegram Bot interface
-- AI Models: GPT-4o (generation), Perplexity Sonar (research)
-- Maintained by: Ilya Morozov (requests comments) and Maria (reviews/approves)
+## Input Format
 
-## Repository Structure
+Sent via Telegram bot (routed from Telegram Router) or POST webhook:
 
-### n8n Workflow (Primary)
+```
+PERSON: maria
+LINK: https://www.sostav.ru/publication/example
+QUESTION: Как вы оцениваете текущие тренды в брендинге?
+```
 
-**ceo-comment-writer-workflow-multi.json** (v2.3)
-- Production workflow with 30+ nodes
-- AI Agent architecture with conversational memory
-- Multi-person profile support (PERSON field)
-- Unlimited PR manager feedback iterations
-- Import directly into n8n
+Field aliases: `LINK` / `ССЫЛКА` / `CONTEXT` / `КОНТЕКСТ` and `QUESTION` / `ВОПРОС`. Default PERSON is `maria` → `maria_arkhangelskaya`.
 
-### Profile System
+## v2.0 Architecture (4-Agent Pipeline)
 
-**profiles/** directory:
-- `maria_arkhangelskaya.json` - Maria's full voice profile
-- `default.json` - Fallback profile
-- `validate-profile.js` - Profile validation script
-- `README.md` - Profile management guide
+```
+[Telegram Router] ──► Execute Workflow Trigger ──►┐
+[Web POST /media-comment/generate] ──► Normalize ──►┘
+     ↓
+Parse Request → Validate Fields → Fetch Profile (GitHub)
+     ↓
+Strategist Agent (Claude + Tavily Extract)
+  → builds structured research brief
+     ↓
+Research Agent (Claude + Perplexity sonar-pro)
+  → structured report with article + market context + citations
+     ↓
+Writer Agent (Claude)
+  → КОНТЕКСТ / КОММЕНТАРИЙ / ПРОВЕРКА sections
+     ↓
+Extract Comment → Humanizer Agent (GPT-4o)
+  → 24-pattern AI removal, adds personality
+     ↓
+Compliance Review → Route Output
+  ├─ Web: Build Callback → POST to callbackUrl
+  └─ Telegram: Format → Send Final Comment
+```
 
-### Core Documentation
+## Key Implementation Details
 
-**README.md**
-- Complete system overview and setup guide
-- Version 2.3 features and architecture
-- 9-part response framework
-- Media outlet profiles
-- Test cases and usage examples
+**Speaker profiles** are fetched from GitHub raw:
+```
+https://raw.githubusercontent.com/cybernexcorps/ceo-comment-writer/main/profiles/{profileId}.json
+```
+Fallback profile (maria_arkhangelskaya) is hardcoded in `Parse Profile` node if GitHub fetch fails.
 
-**WORKFLOW-V2.3-AI-AGENT-GUIDE.md**
-- Technical architecture documentation
-- Node reference and data flow diagrams
-- Memory management details
-- Migration guide from v2.2
+**Prompt node IDs (for API patching):**
+- `b2-0002` Parse Request, `b2-0008` Build Strategist Prompt, `b2-0011` Build Research Prompt
+- `b2-0015` Build Writer Prompt, `b2-0019` Build Humanizer Prompt
 
-**PR-MANAGER-FEEDBACK-GUIDE.md**
-- User guide for PR managers
-- Feedback command reference
-- Best practices for revision requests
+**Humanizer (b2-0019) content-lock rule:** STYLE editor only — must not rewrite content. Rewriting from scratch causes loss of specific facts (ОКВЭД codes, named details) from Writer output. Current: v2.2, deployed 2026-02-27, ~2829 chars system message.
 
-### Setup Documentation
+**Perplexity search (v2.0):** Research Agent uses the native `n8n-nodes-base.perplexityTool` node with model `sonar-pro` and `searchRecency: month`. Russian context is injected into the query text (prefix with `Россия, российский рынок`). The search query is built by `Build Research Prompt` from the Strategist's `## АНАЛИЗ ТЕМЫ` section, capped at 2000 chars.
 
-**QUICK-START.md** - 15-minute setup guide
-**N8N-WORKFLOW-SETUP.md** - Comprehensive configuration guide
-**IMPLEMENTATION-CHECKLIST.md** - Deployment checklist
-**WORKFLOW-ARCHITECTURE.md** - Visual architecture diagrams
-**WORKFLOW-SUMMARY.md** - High-level overview
+**Web webhook trigger (v2.0):** `POST /media-comment/generate` with body `{ jobId, person, articleUrl, question, callbackUrl }`. Responds 202 immediately, then POSTs result JSON to `callbackUrl` with `X-DDVB-API-Key` header.
 
-### Voice & Profile Files
+**Compliance thresholds:** 1200–2200 chars (with ±15% tolerance), Russian Cyrillic >100 chars, no emojis, max 2 `**bold**` markers, question relevance keyword check.
 
-**PROMPTS.md**
-- Complete prompt templates reference
-- All AI Agent and Humanization prompts documented
-- Variable reference and modification guide
-- System and user message templates
+**Humanizer framework:** 24 AI-pattern categories (content, language, style, communication, filler). Output must be Russian only — GPT-4o sometimes reverts to English if system prompt context is lost.
 
-**Мария Архангельская и DDVB_ профиль и роль.md**
-- Maria's professional profile and background (Russian)
-- Career progression and expertise areas
+**Format Telegram Output node (b2-0023):** Telegram output format:
+```
+Спикер: Мария Архангельская
+Генеральный директор и управляющий партнёр, DDVB
 
-**MULTI-COMMENTATOR-GUIDE.md**
-- Multi-person profile system documentation
-- How to add new commentator profiles
+[comment text]
+```
+- Uses `profile.name_ru` for full name, `profile.title_ru` + `profile.company` for second line.
+- No character count line (removed).
+- ⚠️ `inputData.profile` is `undefined` at this node — Compliance Review does not forward the profile object. Must fall back to `$('Finalize Profile').first().json.profile`.
 
-## System Architecture (v2.3)
+## Credentials Required
 
-### n8n Workflow Components
+| Credential | n8n Name | Nodes |
+|------------|----------|-------|
+| Anthropic API | `DDVB Anthropic` | Strategist Model, Research Model, Writer Model |
+| OpenAI API | `DDVB OpenAI` | Humanizer Model (GPT-4o) |
+| Tavily API | `Tavily account` | Strategist Tavily Extract Tool |
+| Perplexity API | `Perplexity account` | Perplexity Research Tool |
+| Telegram Bot | `DDVB Test Bot` | Send nodes |
+| GitHub | `GitHub account` | Fetch Profile from GitHub, Get Default Profile |
 
-**Phase 1: Request Intake**
-- Telegram Bot trigger receives requests
-- Parse PERSON, МЕДИА, ВОПРОС, КОНТЕКСТ, ЦЕЛЕВАЯ ДЛИНА
-- Load JSON profile from profiles/ directory
+## Linking to Telegram Router
 
-**Phase 2: Research (Parallel)**
-- Article content analysis (Perplexity API)
-- Media outlet profiling
-- Journalist background research
+After import, update the Telegram Router workflow (ID: `ArQkIrLPcz5dOMvB`), node `exec-comment-writer` → change the target workflow ID to the newly imported workflow's ID.
 
-**Phase 3: Comment Generation**
-- AI Agent with GPT-4o
-- Conversational memory for revision context
-- 9-part response framework (10-part for revisions)
-- Humanization pass for natural Russian flow
+## Differences: v1.0 vs v2.0
 
-**Phase 4: Approval Workflow**
-- 4-button interface: Approve / Request Edits / Edit / Improve
-- Unlimited feedback iterations
-- Version tracking and diff calculation
-- Memory cleanup on approval
+| Aspect | v1.0 | v2.0 |
+|--------|------|-------|
+| Agents | Research + Comment Generator + Humanizer | **Strategist** + Research + Writer + Humanizer |
+| Search | Yandex MCP SSE endpoint | **Perplexity sonar-pro** (native n8n node) |
+| Triggers | Execute Workflow only | Execute Workflow + **Web Webhook** |
+| Output routing | Single Telegram path | Switch: Web callback or Telegram |
+| Nodes | 20 | ~43 |
 
-### Key v2.3 Features
+## File Notes
 
-1. **AI Agent with Memory**: LangChain-style architecture with BufferMemory
-2. **Unlimited Feedback Loop**: Natural language editing commands
-3. **Multi-Person Profiles**: PERSON field for different commentators
-4. **Research Caching**: Results cached across revision iterations
-5. **Version Tracking**: Shows iteration count and changes summary
-
-### Response Framework (9-Part Structure)
-
-1. **КОНТЕКСТ**: Brief analysis of what's being discussed
-2. **МЕДИА-АНАЛИЗ**: Media outlet identification and adaptation
-3. **ПРЯМОЙ ОТВЕТ**: Direct answer alignment verification
-4. **ОРИГИНАЛЬНОСТЬ**: Originality and facts check
-5. **ПОЗИЦИОНИРОВАНИЕ**: Strategic angle for the commentator
-6. **КОММЕНТАРИЙ**: Ready-to-post comment (1,500-2,000 characters)
-7. **ПРОВЕРКА ДЛИНЫ**: Character count verification
-8. **АЛЬТЕРНАТИВА**: Alternative approach (optional)
-9. **ПРИМЕЧАНИЯ**: Caveats and recommendations
-10. **ИЗМЕНЕНИЯ**: (Revisions only) Summary of changes made
-
-### Input Requirements
-
-- **PERSON**: Commentator profile (optional, defaults to Maria)
-- **МЕДИА**: Media outlet (required) - determines tone and length
-- **ВОПРОС**: Exact question from journalist (required)
-- **КОНТЕКСТ**: Link or article summary (required)
-- **ЦЕЛЕВАЯ ДЛИНА**: Target length, default 1,500-2,000 characters (required)
-
-## Voice Guidelines
-
-### Maria's Professional Identity
-- 20+ years experience: Project Manager -> Director -> CEO
-- Systems thinker: "Physics of Management" (ФИЗИКА УПРАВЛЕНИЯ) philosophy
-- Operational excellence -> Strategic advantage mindset
-- Council member: Russian Branding Companies Association (АБКР)
-- Expert judge: "Silver Archer", "Silver Mercury" industry awards
-
-### Core Voice Characteristics
-- Professional expert with grounded authority (not arrogant)
-- Systems perspective connecting operational to strategic
-- Measured thoughtfulness (considers multiple angles)
-- Formal вы-form Russian with warm, respectful directness
-- Experience-based insights: "В нашей практике...", "За 20 лет..."
-
-### Topics by Expertise Level
-
-**Strong expertise**: Agency operations, client relationships, design systems, professional standards, Russian branding market dynamics
-
-**Moderate expertise**: Brand positioning (operational angle), creative team management, industry trends
-
-**Avoid**: Technical design details, specific tools/software, international markets, topics outside branding/agency management
-
-### What Maria Avoids
-- Marketing speak and corporate jargon
-- Direct DDVB promotion or client name-dropping
-- Personal attacks or unprofessional criticism
-- Commenting outside expertise areas
-- Absolutes and oversimplifications
-- Trendy buzzwords without substance
-
-## Media Outlet Profiles
-
-The system adapts tone and length for 7 major Russian outlets:
-
-| Outlet | Style | Character Range |
-|--------|-------|-----------------|
-| **Sostav.ru** | Industry insider | 1,500-2,000 |
-| **Cossa.ru** | Digital marketing | 1,200-1,800 |
-| **Forbes Russia** | CEO business | 1,800-2,200 |
-| **RBC** | Authoritative journalism | 1,500-2,000 |
-| **VC.ru** | Startup community | 1,200-1,800 |
-| **Секрет фирмы** | Management systems | 1,500-2,200 |
-| **Adindex.ru** | Advertising insider | 1,200-1,800 |
-
-## Workflow
-
-### Standard Flow
-1. **Ilya sends** Telegram message with PERSON, МЕДИА, ВОПРОС, КОНТЕКСТ
-2. **Workflow researches** article, outlet, and journalist
-3. **AI Agent generates** 9-part response with draft comment
-4. **Ilya reviews** and requests edits if needed (unlimited iterations)
-5. **Maria approves** final version (or provides additional feedback)
-6. **Post** comment on appropriate platform
-
-### Feedback Loop (v2.3)
-1. Click "Запросить правки" button
-2. Send natural language feedback: "Сократить на 20%", "Добавить статистику"
-3. AI regenerates with full context from memory
-4. Repeat as needed until satisfied
-5. Click "Утвердить" to finalize
-
-## Ethical Boundaries
-
-### Always Maintain
-- Client confidentiality and NDAs
-- Professional courtesy even when disagreeing
-- DDVB's reputation and values alignment
-- Industry ethical standards
-- Respect for peers and competitors
-- Factual accuracy and honesty
-
-### Never Do
-- Disclose confidential client information
-- Make personal attacks or unprofessional comments
-- Speak authoritatively outside expertise
-- Contradict DDVB's public positions
-- Violate professional ethics
-- Make unsubstantiated claims
-
-## Development Notes
-
-### Working with the n8n Workflow
-
-**To modify the workflow:**
-1. Import `ceo-comment-writer-workflow-multi.json` into n8n
-2. Make changes in n8n visual editor
-3. Export and save back to this repository
-4. Update documentation if architecture changes
-
-**Key nodes to understand:**
-- `Parse Request with PERSON` - Input parsing and profile selection
-- `Load Profile` - Loads JSON from profiles/ directory
-- `AI Agent` - GPT-4o with memory context
-- `Save to Memory` / `Load Conversation History` - Memory management
-- `Send For Approval` - 4-button Telegram interface
-
-### Working with Profiles
-
-**To add a new commentator:**
-1. Copy `profiles/maria_arkhangelskaya.json` as template
-2. Rename to `firstname_lastname.json`
-3. Fill in all profile fields
-4. Run `node profiles/validate-profile.js filename.json`
-5. Add name mapping in Parse Request node
-
-### File Encoding
-All files use UTF-8 encoding due to Russian (Cyrillic) content. Ensure any edits preserve this encoding.
-
-## Reference Information
-
-- **Version**: 2.3 (AI Agent with Memory - November 2024)
-- **Platform**: n8n workflow automation + Telegram Bot
-- **AI Models**: GPT-4o (OpenAI), Sonar (Perplexity)
-- **Language**: Russian (русский язык)
-- **Telegram Channel**: ФИЗИКА УПРАВЛЕНИЯ (Physics of Management)
-
-### Version History
-
-| Version | Features |
-|---------|----------|
-| 2.0 | Media outlet awareness, 9-part framework |
-| 2.1 | Basic AI Agent integration |
-| 2.2 | Multi-person profile system (PERSON field) |
-| **2.3** | **AI Agent + Memory + Unlimited Feedback Loop** |
-
-### Repository File Summary
-
-| File | Purpose |
-|------|---------|
-| `ceo-comment-writer-workflow-multi.json` | v2.3 production workflow |
-| `profiles/*.json` | Commentator voice profiles |
-| `README.md` | Main documentation |
-| `WORKFLOW-V2.3-AI-AGENT-GUIDE.md` | Technical architecture |
-| `PR-MANAGER-FEEDBACK-GUIDE.md` | User guide for feedback |
-| `MULTI-COMMENTATOR-GUIDE.md` | Multi-person system guide |
-| `PROMPTS.md` | Prompt templates reference |
-| `Мария Архангельская и DDVB_ профиль и роль.md` | Maria's background |
-| `QUICK-START.md` | 15-minute setup |
-| `N8N-WORKFLOW-SETUP.md` | Comprehensive setup |
-| `IMPLEMENTATION-CHECKLIST.md` | Deployment checklist |
-| `WORKFLOW-ARCHITECTURE.md` | Visual diagrams |
-| `WORKFLOW-SUMMARY.md` | High-level overview |
+- `AGENTS.md` — Contains Codex (OpenAI) skills configuration; not relevant to Claude Code.
+- `yandex_prompt_example.md` — Legacy reference for Yandex research brief format. Archived; Perplexity now handles search.
